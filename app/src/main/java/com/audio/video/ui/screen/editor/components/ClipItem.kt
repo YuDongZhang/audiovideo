@@ -2,7 +2,6 @@ package com.audio.video.ui.screen.editor.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -26,15 +25,14 @@ import com.audio.video.util.formatDurationMs
 
 /**
  * 时间线上的单个片段条
- * 显示时长标签，左右两端有可拖拽的裁剪手柄
+ * 不处理点击事件 — 由 Timeline 统一处理触摸（定位播放头 + 自动选中片段）
+ * 仅左右裁剪手柄处理拖拽
  */
 @Composable
 fun ClipItem(
     clip: VideoClip,
     widthDp: Dp,
     isSelected: Boolean,
-    pxPerMs: Float,
-    onClick: () -> Unit,
     onTrimStartDrag: (deltaPx: Float) -> Unit,
     onTrimEndDrag: (deltaPx: Float) -> Unit,
     modifier: Modifier = Modifier
@@ -50,21 +48,22 @@ fun ClipItem(
             .clip(shape)
             .then(borderMod)
             .background(bgColor)
-            .clickable(onClick = onClick)
     ) {
-        // 左侧裁剪手柄 — 拖拽调整入点
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .width(8.dp)
-                .fillMaxHeight()
-                .background(EditorColors.TrimHandle.copy(alpha = 0.6f))
-                .pointerInput(clip.id) {
-                    detectHorizontalDragGestures { _, dragAmount ->
-                        onTrimStartDrag(dragAmount)
+        // 左侧裁剪手柄 — 仅选中时显示，拖拽调整入点
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(10.dp)
+                    .fillMaxHeight()
+                    .background(EditorColors.TrimHandle.copy(alpha = 0.8f))
+                    .pointerInput(clip.id) {
+                        detectHorizontalDragGestures { _, dragAmount ->
+                            onTrimStartDrag(dragAmount)
+                        }
                     }
-                }
-        )
+            )
+        }
 
         // 中央时长标签
         Text(
@@ -74,18 +73,20 @@ fun ClipItem(
             modifier = Modifier.align(Alignment.Center)
         )
 
-        // 右侧裁剪手柄 — 拖拽调整出点
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .width(8.dp)
-                .fillMaxHeight()
-                .background(EditorColors.TrimHandle.copy(alpha = 0.6f))
-                .pointerInput(clip.id) {
-                    detectHorizontalDragGestures { _, dragAmount ->
-                        onTrimEndDrag(dragAmount)
+        // 右侧裁剪手柄 — 仅选中时显示，拖拽调整出点
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(10.dp)
+                    .fillMaxHeight()
+                    .background(EditorColors.TrimHandle.copy(alpha = 0.8f))
+                    .pointerInput(clip.id) {
+                        detectHorizontalDragGestures { _, dragAmount ->
+                            onTrimEndDrag(dragAmount)
+                        }
                     }
-                }
-        )
+            )
+        }
     }
 }

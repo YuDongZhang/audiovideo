@@ -2,8 +2,7 @@ package com.audio.video.ui.screen.export.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -16,7 +15,6 @@ import com.audio.video.data.model.ExportResolution
 import com.audio.video.ui.theme.AccentBlue
 
 /** 分辨率选择器 — 以 FilterChip 形式展示分辨率选项 */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ResolutionSelector(
     selectedResolution: ExportResolution,
@@ -29,10 +27,7 @@ fun ResolutionSelector(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-        ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ExportResolution.entries.forEach { resolution ->
                 FilterChip(
                     selected = resolution == selectedResolution,
@@ -49,7 +44,6 @@ fun ResolutionSelector(
 }
 
 /** 质量选择器 — 以 FilterChip 形式展示质量选项 */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun QualitySelector(
     selectedQuality: ExportQuality,
@@ -62,10 +56,7 @@ fun QualitySelector(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-        ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ExportQuality.entries.forEach { quality ->
                 FilterChip(
                     selected = quality == selectedQuality,

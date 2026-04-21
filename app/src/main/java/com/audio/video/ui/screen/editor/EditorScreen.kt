@@ -117,7 +117,7 @@ fun EditorScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 时间线轨道
+            // 时间线轨道（全局视图 + 双指缩放）
             Timeline(
                 state = uiState.timelineState,
                 onClipSelected = viewModel::selectClip,
@@ -135,6 +135,7 @@ fun EditorScreen(
                     viewModel.trimClipEnd(clipId, clip.endTimeMs + deltaMs)
                 },
                 onSeekTo = viewModel::seekTo,
+                onZoomChanged = viewModel::updateZoomLevel,
                 modifier = Modifier.fillMaxWidth()
             )
 
