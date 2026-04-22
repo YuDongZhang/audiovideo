@@ -1,0 +1,240 @@
+# ClipForge 技术要点
+
+## 架构概览
+
+```
+com.audio.video/
+├── ui/                    # Jetpack Compose UI 层
+│   ├── navigation/        # 导航路由（4个页面）
+│   ├── theme/             # 暗色专业主题
+│   └── screen/            # 各页面 Screen + ViewModel + 组件
+├── data/                  # 数据层
+│   ├── model/             # 数据模型（Project, VideoClip, TimelineState...）
+│   └── repository/        # 持久化（SharedPreferences + Gson）
+├── player/                # ExoPlayer 封装
+├── editor/                # 时间线纯逻辑引擎
+└── export/                # Media3 Transformer 导出
+```
+
+**架构模式**：MVVM，每个页面一个 ViewModel，通过 StateFlow 驱动 Compose UI。
+
+---
+
+## 1. 视频播放器 — ExoPlayer + ClippingConfiguration
+
+### 核心思路
+
+用 ExoPlayer 播放列表实现多片段无缝衔接。每个片段通过 `MediaItem.ClippingConfiguration` 设置入点/出点，ExoPlayer 自动处理裁剪和片段过渡。
+
+```kotlin
+// 为每个片段创建带裁剪配置的 MediaItem
+MediaItem.Builder()
+    .setUri(clip.sourceUri)
+    .setClippingConfiguration(
+        ClippingConfiguration.Builder()
+            .setStartPositionMs(clip.startTimeMs)  // 入点
+            .setEndPositionMs(clip.endTimeMs)       // 出点
+            .build()
+    )
+    .build()
+
+// 设置播放列表，ExoPlayer 会按顺序无缝播放
+player.setMediaItems(mediaItems)
+player.prepare()
+```
+
+### 全局位置 ↔ 片段位置 转换
+
+时间线上的播放位置是"全局毫秒"，但 ExoPlayer 的 seek 是"第 N 个片段的第 M 毫秒"。需要双向转换：
+
+```
+全局位置 8500ms，片段列表 [3000ms, 2000ms, 6000ms]
+→ 8500 - 3000 - 2000 = 3500，落在第3个片段的 3500ms 处
+→ player.seekTo(2, 3500)
+```
+
+**关键坑**：`ClippingConfiguration` 下 `player.seekTo(index, positionMs)` 的 `positionMs` 是相对于裁剪窗口起始的偏移量（从 0 开始），不是原始视频的绝对时间。同理 `player.currentPosition` 返回的也是窗口内偏移。
+
+### 播放列表重建
+
+编辑操作（分割、裁剪、删除）后需要重建播放列表。重建前保存当前播放位置，重建后恢复：
+
+```kotlin
+val previousPosition = state.currentPositionMs
+player.setMediaItems(newMediaItems)
+player.prepare()
+seekTo(previousPosition.coerceIn(0, newTotalDuration))
+```
+
+### 位置跟踪
+
+播放时以 16ms 间隔（约 60fps）轮询 `getCurrentGlobalPosition()`，通过 StateFlow 推送到 UI 驱动播放头移动。暂停时停止轮询。
+
+---
+
+## 2. 时间线 UI — 全局视图 + 双指缩放
+
+### 自适应铺满屏幕
+
+默认 `zoomLevel = 1.0` 时，所有片段刚好占满屏幕宽度：
+
+```kotlin
+val fitPxPerMs = screenWidthPx / totalDurationMs  // 基准比率
+val pxPerMs = fitPxPerMs * zoomLevel               // 实际比率
+```
+
+每个片段宽度按时长占比分配。放大后超出屏幕宽度时自动启用水平滚动。
+
+### 手势分区设计
+
+为避免"点击选中片段"和"点击定位播放头"的冲突，采用**统一触摸处理 + 自动选中**：
+
+| 区域 | 手势 | 行为 |
+|---|---|---|
+| 刻度尺（36dp） | 点击 / 拖拽 | 播放头跳转 + 自动选中所在片段 |
+| 片段轨道（72dp） | 点击 / 拖拽 | 播放头跳转 + 自动选中所在片段 |
+| 片段轨道 | 双指捏合 | 时间线缩放 |
+| 选中片段左右边缘 | 水平拖拽 | 裁剪入点/出点 |
+
+**核心：片段不处理点击事件**，所有触摸都由 Timeline 统一转换为时间位置。选中状态由播放头位置自动决定（播放头在哪个片段范围内，就选中哪个片段）。
+
+### 双指缩放实现
+
+使用低级手势 API，仅在检测到 2 根及以上手指时才处理缩放，单指触摸透传给子组件：
+
+```kotlin
+awaitEachGesture {
+    awaitFirstDown(requireUnconsumed = false)
+    do {
+        val event = awaitPointerEvent()
+        if (event.changes.size >= 2) {
+            val zoom = event.calculateZoom()
+            onZoomChanged(currentZoom * zoom)
+            event.changes.forEach { it.consume() }
+        }
+    } while (event.changes.any { it.pressed })
+}
+```
+
+---
+
+## 3. 时间线编辑引擎 — 纯函数
+
+`TimelineEngine` 是无状态的纯函数集合，不依赖 Android，方便单元测试：
+
+### 分割
+
+在全局时间位置将片段一分为二：
+
+```
+片段 [0ms ~ 10000ms]，在 6000ms 处分割
+→ 片段A [0ms ~ 6000ms] + 片段B [6000ms ~ 10000ms]（新 ID）
+```
+
+### 裁剪
+
+调整入点/出点，最小保留 100ms：
+
+```kotlin
+newStartMs.coerceIn(0, clip.endTimeMs - 100)
+newEndMs.coerceIn(clip.startTimeMs + 100, clip.originalDurationMs)
+```
+
+### 撤销/重做
+
+基于快照栈：每次操作前将当前 `List<VideoClip>` 压入撤销栈，清空重做栈。撤销时将当前状态压入重做栈，弹出撤销栈顶恢复。最多保留 50 步。
+
+---
+
+## 4. 视频导出 — Media3 Transformer
+
+### 导出流程
+
+```
+片段列表 → EditedMediaItem（带 ClippingConfiguration）
+         → EditedMediaItemSequence（按顺序排列）
+         → Composition
+         → Transformer.start(composition, outputPath)
+```
+
+Transformer 使用硬件加速编码器（MediaCodec），自动处理片段拼接、转码和封装。
+
+### 进度追踪
+
+通过后台线程每 500ms 轮询 `transformer.getProgress(progressHolder)`，将 0~100 的整数进度转换为 0.0~1.0 浮点数推送到 UI。
+
+### 写入相册
+
+导出完成后通过 MediaStore API 将文件写入 `Movies/ClipForge/` 目录。Android Q+ 使用 `IS_PENDING` 机制确保写入过程中文件对其他应用不可见：
+
+```kotlin
+// 1. 插入 pending 状态的记录
+values.put(IS_PENDING, 1)
+val uri = contentResolver.insert(EXTERNAL_CONTENT_URI, values)
+// 2. 写入文件内容
+contentResolver.openOutputStream(uri).use { ... }
+// 3. 取消 pending，文件变为可见
+values.put(IS_PENDING, 0)
+contentResolver.update(uri, values, null, null)
+```
+
+---
+
+## 5. 暗色主题系统
+
+强制暗色，不跟随系统。色板设计：
+
+| 层级 | 色值 | 用途 |
+|---|---|---|
+| `#0D0D0D` | 最深背景 | 编辑器画布 |
+| `#141414` | 页面背景 | 各页面 Surface |
+| `#1A1A1A` | 卡片/面板 | 项目卡片、底部栏 |
+| `#242424` | 轨道背景 | 时间线轨道 |
+| `#4A90FF` | 强调色 | 播放头、选中态、主按钮 |
+| `#2D5A8E` | 片段默认色 | 时间线上的片段条 |
+
+Material 3 的 `darkColorScheme` 映射到自定义色板，`AudioVideoTheme` 只接受 `content` 参数，无明暗切换。
+
+---
+
+## 6. 权限适配
+
+针对 Android 碎片化的存储权限：
+
+| API 级别 | 所需权限 |
+|---|---|
+| 24 ~ 28 | `READ_EXTERNAL_STORAGE` + `WRITE_EXTERNAL_STORAGE` |
+| 29 ~ 32 | `READ_EXTERNAL_STORAGE`（写入走 Scoped Storage） |
+| 33+ | `READ_MEDIA_VIDEO` |
+
+运行时通过 Accompanist Permissions 库在媒体选择页按需请求，未授权时显示引导界面。
+
+---
+
+## 7. 数据持久化
+
+当前使用 SharedPreferences + Gson 序列化项目列表。每个 `Project` 包含嵌套的 `List<VideoClip>`，整体序列化为 JSON 字符串存储。
+
+保存时机：
+- 编辑操作后自动保存（`updateClips` → `saveProject`）
+- 返回首页时保存
+- 进入导出页前保存
+
+后续可升级为 Room 数据库以支持更复杂的查询和更好的性能。
+
+---
+
+## 8. 依赖清单
+
+| 库 | 版本 | 用途 |
+|---|---|---|
+| Media3 ExoPlayer | 1.5.1 | 视频播放 |
+| Media3 Transformer | 1.5.1 | 视频导出/编码 |
+| Navigation Compose | 2.9.0 | 页面导航 |
+| Lifecycle ViewModel Compose | 2.10.0 | ViewModel + Compose 集成 |
+| Coil Compose + Video | 2.7.0 | 视频缩略图加载 |
+| Accompanist Permissions | 0.36.0 | 运行时权限 |
+| Gson | 2.11.0 | JSON 序列化 |
+| Compose BOM | 2024.09.00 | Compose 版本管理 |
+
+**注意**：Compose BOM 2024.09.00 的 `FlowRow` 签名与新版不兼容（缺少 `FlowRowOverflow` 参数），已改用 `Row` 替代。

@@ -29,6 +29,7 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
     private var positionJob: Job? = null
+    private var currentClips: List<VideoClip> = emptyList()
 
     init {
         player.addListener(object : Player.Listener {
@@ -40,19 +41,25 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     _state.value = _state.value.copy(
-                        totalDurationMs = player.duration.coerceAtLeast(0)
+                        totalDurationMs = currentClips.sumOf { it.trimmedDurationMs }
                     )
                 }
             }
         })
+        player.playWhenReady = false
     }
 
     /**
      * 根据片段列表构建播放列表
-     * 每个片段通过 ClippingConfiguration 设置入点/出点，ExoPlayer 会无缝衔接播放
+     * 保存当前播放位置，重建后恢复到同一位置
      */
     fun setTimeline(clips: List<VideoClip>) {
-        val mediaItems = clips.sortedBy { it.displayOrder }.map { clip ->
+        if (clips.isEmpty()) return
+
+        val previousPositionMs = _state.value.currentPositionMs
+        currentClips = clips.sortedBy { it.displayOrder }
+
+        val mediaItems = currentClips.map { clip ->
             MediaItem.Builder()
                 .setUri(Uri.parse(clip.sourceUri))
                 .setClippingConfiguration(
@@ -63,11 +70,19 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
                 )
                 .build()
         }
+
+        val wasPlaying = player.isPlaying
         player.setMediaItems(mediaItems)
         player.prepare()
 
-        val totalDuration = clips.sumOf { it.trimmedDurationMs }
+        val totalDuration = currentClips.sumOf { it.trimmedDurationMs }
         _state.value = _state.value.copy(totalDurationMs = totalDuration)
+
+        // 恢复到之前的位置（如果仍在范围内）
+        val restorePosition = previousPositionMs.coerceIn(0, totalDuration)
+        seekTo(restorePosition)
+
+        if (wasPlaying) player.play()
     }
 
     fun play() { player.play() }
@@ -76,19 +91,21 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
 
     /**
      * 跳转到全局时间线位置（毫秒）
-     * 需要将全局位置换算为对应片段的局部位置
+     * 将全局位置换算为对应片段索引 + 片段内偏移量
      */
     fun seekTo(positionMs: Long) {
-        var remaining = positionMs
-        for (i in 0 until player.mediaItemCount) {
-            val itemDuration = player.getMediaItemAt(i).clippingConfiguration.endPositionMs -
-                    player.getMediaItemAt(i).clippingConfiguration.startPositionMs
-            if (remaining < itemDuration || i == player.mediaItemCount - 1) {
-                player.seekTo(i, remaining + player.getMediaItemAt(i).clippingConfiguration.startPositionMs)
+        if (currentClips.isEmpty()) return
+
+        var remaining = positionMs.coerceAtLeast(0)
+        for (i in currentClips.indices) {
+            val clipDuration = currentClips[i].trimmedDurationMs
+            if (remaining < clipDuration || i == currentClips.lastIndex) {
+                val seekPositionInClip = remaining.coerceAtMost(clipDuration)
+                player.seekTo(i, seekPositionInClip)
                 _state.value = _state.value.copy(currentPositionMs = positionMs)
                 return
             }
-            remaining -= itemDuration
+            remaining -= clipDuration
         }
     }
 
@@ -97,15 +114,17 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
      * 累加当前片段之前所有片段的时长 + 当前片段内的偏移量
      */
     fun getCurrentGlobalPosition(): Long {
-        if (player.mediaItemCount == 0) return 0L
+        if (currentClips.isEmpty() || player.mediaItemCount == 0) return 0L
+
+        val currentIndex = player.currentMediaItemIndex
+            .coerceIn(0, currentClips.lastIndex)
+
         var position = 0L
-        for (i in 0 until player.currentMediaItemIndex) {
-            val item = player.getMediaItemAt(i)
-            position += item.clippingConfiguration.endPositionMs - item.clippingConfiguration.startPositionMs
+        for (i in 0 until currentIndex) {
+            position += currentClips[i].trimmedDurationMs
         }
-        val currentItem = player.getMediaItemAt(player.currentMediaItemIndex)
-        position += (player.currentPosition - currentItem.clippingConfiguration.startPositionMs)
-            .coerceAtLeast(0)
+        // player.currentPosition 对 clipped media 返回片段内偏移量
+        position += player.currentPosition.coerceAtLeast(0)
         return position
     }
 
