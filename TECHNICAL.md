@@ -568,3 +568,136 @@ gain(t):
 ```
 
 实时应用：位置跟踪协程每 16ms 计算一次 `AudioFadeCalculator.calculateVolumeAtPosition()`，将结果写入 `player.volume`，实现播放中的平滑淡入淡出。
+
+---
+
+## 11. 视频滤镜 — 颜色矩阵变换
+
+### 4×4 颜色矩阵
+
+每个像素的 RGBA 值乘以 4×4 矩阵得到变换后颜色（列主序，OpenGL 标准）：
+
+```
+[R']   [m0  m4  m8  m12] [R]
+[G'] = [m1  m5  m9  m13] [G]
+[B']   [m2  m6  m10 m14] [B]
+[A']   [m3  m7  m11 m15] [A]
+```
+
+### 滤镜矩阵示例
+
+**单位矩阵**（原片不变）：对角线 1，其余 0
+
+**灰度**（BT.601 亮度公式）：
+```
+人眼对 RGB 敏感度不同：R=0.299, G=0.587, B=0.114
+三行都用相同权重 → R'=G'=B'=亮度 → 灰度图
+
+[0.299  0.587  0.114  0]
+[0.299  0.587  0.114  0]
+[0.299  0.587  0.114  0]
+[0      0      0      1]
+```
+
+**复古 (Sepia)**：经典棕色调，源自早期摄影的硫化银效果
+```
+[0.393  0.769  0.189  0]
+[0.349  0.686  0.168  0]
+[0.272  0.534  0.131  0]
+[0      0      0      1]
+```
+
+**鲜艳**（饱和度增强）：拉大 RGB 通道差异
+```
+[1.3   -0.15  -0.15  0]    R' = 1.3R - 0.15G - 0.15B
+[-0.15  1.3   -0.15  0]    各通道"抢夺"其他通道的分量
+[-0.15  -0.15  1.3   0]    → 颜色差异被放大 → 饱和度提高
+[0      0      0     1]
+```
+
+### 实现方式
+
+通过 Media3 的 `RgbMatrix` 接口将矩阵应用到 GPU 渲染管线：
+- **预览**：ExoPlayer `setVideoEffects([RgbMatrix { matrix }])`
+- **导出**：Transformer `EditedMediaItem.setEffects(Effects([], [RgbMatrix]))`
+
+GPU 在 Fragment Shader 中执行矩阵乘法，性能无损。
+
+---
+
+## 12. 变速播放 — PTS 与音频时间拉伸
+
+### 视频变速
+
+视频帧有 PTS（Presentation Time Stamp）控制显示时机：
+
+```
+原始: 帧0@0ms  帧1@33ms  帧2@66ms  帧3@100ms  (30fps)
+2x:   帧0@0ms  帧1@16ms  帧2@33ms  帧3@50ms   (PTS减半 → 快放)
+0.5x: 帧0@0ms  帧1@66ms  帧2@133ms 帧3@200ms  (PTS加倍 → 慢放)
+```
+
+### 音频时间拉伸（Sonic 算法）
+
+直接改变音频播放速率会导致音调变化（快放声音变尖）。Sonic 算法通过 WSOLA（波形相似重叠叠加）保持音调不变：
+
+```
+快放 2x：
+  1. 将音频切成小段（20-30ms 的窗口）
+  2. 跳过部分窗口（减少总量）
+  3. 窗口之间做交叉渐变（避免断裂噪声）
+  → 时长减半，音调不变
+
+慢放 0.5x：
+  1. 同样切小段
+  2. 重复部分窗口（增加总量）
+  3. 交叉渐变平滑拼接
+  → 时长加倍，音调不变
+```
+
+ExoPlayer 内置 Sonic 引擎，设置 `PlaybackParameters(speed)` 即可自动处理。
+
+### 导出变速
+
+Media3 Transformer 的 `SpeedChangeEffect` 在编码阶段调整 PTS，音频同步重采样。
+
+---
+
+## 13. 转场效果 — 多纹理 GPU 合成
+
+### 交叉溶解 (Crossfade)
+
+转场期间需要**同时解码两路视频**，在 GPU 上混合：
+
+```
+时间线:  [...片段A...][转场][...片段B...]
+                      ↑
+                   重叠区间
+
+Fragment Shader:
+  uniform sampler2D texA;    // 前片段纹理
+  uniform sampler2D texB;    // 后片段纹理
+  uniform float progress;    // 转场进度 0.0 → 1.0
+
+  void main() {
+      vec4 colorA = texture2D(texA, vTexCoord);
+      vec4 colorB = texture2D(texB, vTexCoord);
+      gl_FragColor = mix(colorA, colorB, progress);
+      // mix(a, b, t) = a × (1-t) + b × t
+  }
+```
+
+### 渐黑 (Fade to Black)
+
+```
+前半段 (progress 0→0.5):
+  output = texA × (1.0 - progress × 2)    → 从正常到全黑
+后半段 (progress 0.5→1.0):
+  output = texB × (progress × 2 - 1.0)    → 从全黑到正常
+```
+
+### 关键挑战
+
+- 两路解码器并行运行，内存和 GPU 压力倍增
+- 需要精确的帧级时间同步
+- FBO（帧缓冲对象）离屏渲染合成两个纹理
