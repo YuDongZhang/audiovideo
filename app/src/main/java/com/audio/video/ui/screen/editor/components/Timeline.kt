@@ -40,6 +40,7 @@ import com.audio.video.ui.theme.EditorColors
 @Composable
 fun Timeline(
     state: TimelineState,
+    waveforms: Map<String, FloatArray>,
     onClipSelected: (String) -> Unit,
     onTrimStartDrag: (clipId: String, deltaPx: Float) -> Unit,
     onTrimEndDrag: (clipId: String, deltaPx: Float) -> Unit,
@@ -175,6 +176,7 @@ fun Timeline(
                             clip = clip,
                             widthDp = clipWidthDp,
                             isSelected = clip.id == state.selectedClipId,
+                            waveform = waveforms[clip.id],
                             onTrimStartDrag = { delta -> onTrimStartDrag(clip.id, delta) },
                             onTrimEndDrag = { delta -> onTrimEndDrag(clip.id, delta) }
                         )

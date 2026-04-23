@@ -117,9 +117,10 @@ fun EditorScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 时间线轨道（全局视图 + 双指缩放）
+            // 时间线轨道（全局视图 + 双指缩放 + 音频波形）
             Timeline(
                 state = uiState.timelineState,
+                waveforms = uiState.waveforms,
                 onClipSelected = viewModel::selectClip,
                 onTrimStartDrag = { clipId, deltaPx ->
                     // 将拖拽像素转换为时间偏移量

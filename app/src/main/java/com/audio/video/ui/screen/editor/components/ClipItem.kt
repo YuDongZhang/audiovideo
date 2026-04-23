@@ -5,7 +5,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -25,14 +27,15 @@ import com.audio.video.util.formatDurationMs
 
 /**
  * 时间线上的单个片段条
- * 不处理点击事件 — 由 Timeline 统一处理触摸（定位播放头 + 自动选中片段）
- * 仅左右裁剪手柄处理拖拽
+ * 背景显示音频波形，中央叠加时长标签
+ * 选中时显示左右裁剪手柄
  */
 @Composable
 fun ClipItem(
     clip: VideoClip,
     widthDp: Dp,
     isSelected: Boolean,
+    waveform: FloatArray?,
     onTrimStartDrag: (deltaPx: Float) -> Unit,
     onTrimEndDrag: (deltaPx: Float) -> Unit,
     modifier: Modifier = Modifier
@@ -49,7 +52,29 @@ fun ClipItem(
             .then(borderMod)
             .background(bgColor)
     ) {
-        // 左侧裁剪手柄 — 仅选中时显示，拖拽调整入点
+        // 音频波形背景
+        if (waveform != null && waveform.isNotEmpty()) {
+            WaveformView(
+                waveform = waveform,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = if (isSelected) 10.dp else 2.dp),
+                color = if (isSelected)
+                    EditorColors.ClipAudio.copy(alpha = 0.8f)
+                else
+                    EditorColors.ClipAudio.copy(alpha = 0.5f)
+            )
+        }
+
+        // 中央时长标签
+        Text(
+            text = formatDurationMs(clip.trimmedDurationMs),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isSelected) TextOnAccent else TextSecondary,
+            modifier = Modifier.align(Alignment.Center)
+        )
+
+        // 左侧裁剪手柄 — 仅选中时显示
         if (isSelected) {
             Box(
                 modifier = Modifier
@@ -65,15 +90,7 @@ fun ClipItem(
             )
         }
 
-        // 中央时长标签
-        Text(
-            text = formatDurationMs(clip.trimmedDurationMs),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isSelected) TextOnAccent else TextSecondary,
-            modifier = Modifier.align(Alignment.Center)
-        )
-
-        // 右侧裁剪手柄 — 仅选中时显示，拖拽调整出点
+        // 右侧裁剪手柄 — 仅选中时显示
         if (isSelected) {
             Box(
                 modifier = Modifier

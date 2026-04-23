@@ -7,7 +7,9 @@ import com.audio.video.data.model.Project
 import com.audio.video.data.model.TimelineState
 import com.audio.video.data.model.VideoClip
 import com.audio.video.data.repository.ProjectRepository
+import android.net.Uri
 import com.audio.video.editor.TimelineEngine
+import com.audio.video.editor.WaveformExtractor
 import com.audio.video.player.PlayerState
 import com.audio.video.player.VideoPlayerManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +24,8 @@ data class EditorUiState(
     val playerState: PlayerState = PlayerState(),
     val isLoading: Boolean = true,
     val canUndo: Boolean = false,
-    val canRedo: Boolean = false
+    val canRedo: Boolean = false,
+    val waveforms: Map<String, FloatArray> = emptyMap()
 )
 
 /**
@@ -32,6 +35,7 @@ data class EditorUiState(
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
 
     private val projectRepository = ProjectRepository(application)
+    private val waveformExtractor = WaveformExtractor(application)
     val playerManager = VideoPlayerManager(application, viewModelScope)
 
     private val _uiState = MutableStateFlow(EditorUiState())
@@ -69,6 +73,26 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         )
         if (project.clips.isNotEmpty()) {
             playerManager.setTimeline(project.clips)
+            loadWaveforms(project.clips)
+        }
+    }
+
+    /** 为每个片段异步提取音频波形 */
+    private fun loadWaveforms(clips: List<VideoClip>) {
+        clips.forEach { clip ->
+            // 已有波形的片段跳过
+            if (_uiState.value.waveforms.containsKey(clip.id)) return@forEach
+            viewModelScope.launch {
+                val waveform = waveformExtractor.extract(
+                    uri = Uri.parse(clip.sourceUri),
+                    startMs = clip.startTimeMs,
+                    endMs = clip.endTimeMs,
+                    sampleCount = 80
+                )
+                val updated = _uiState.value.waveforms.toMutableMap()
+                updated[clip.id] = waveform
+                _uiState.value = _uiState.value.copy(waveforms = updated)
+            }
         }
     }
 
@@ -183,7 +207,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         redoStack.clear()
     }
 
-    /** 更新片段列表并同步播放器和持久化 */
+    /** 更新片段列表并同步播放器、波形和持久化 */
     private fun updateClips(clips: List<VideoClip>, pushToUndo: Boolean = false) {
         _uiState.value = _uiState.value.copy(
             timelineState = _uiState.value.timelineState.copy(
@@ -196,6 +220,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         )
         if (clips.isNotEmpty()) {
             playerManager.setTimeline(clips)
+            loadWaveforms(clips)
         }
         saveProject()
     }
