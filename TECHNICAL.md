@@ -701,3 +701,175 @@ Fragment Shader:
 - 两路解码器并行运行，内存和 GPU 压力倍增
 - 需要精确的帧级时间同步
 - FBO（帧缓冲对象）离屏渲染合成两个纹理
+
+---
+
+## 14. 自定义 MediaCodec 编解码流水线
+
+### 完整流水线架构
+
+```
+MediaExtractor     MediaCodec(解码)     MediaCodec(编码)     MediaMuxer
+  (解封装)            (硬件解码)           (硬件编码)          (封装)
+    │                    │                    │                 │
+    │  读取 H.264 NALUs  │  解码为 YUV/Surface  │  编码为 H.264    │  写入 MP4
+    │ ──────────────────→│ ──────────────────→│ ────────────────→│
+    │                    │                    │                 │
+                         │     Surface 中转    │
+                         │←───（零拷贝直传）───→│
+```
+
+### Surface 中转模式
+
+解码器输出和编码器输入共享同一个 Surface，帧数据在 GPU 内存中直接传递：
+
+```kotlin
+// 1. 编码器先创建，获取 Input Surface
+encoder.configure(format, null, null, CONFIGURE_FLAG_ENCODE)
+val surface = encoder.createInputSurface()
+
+// 2. 解码器输出到编码器的 Surface
+decoder.configure(inputFormat, surface, null, 0)  // ← 关键！
+
+// 3. 解码器释放帧时 render=true → 帧自动传给编码器
+decoder.releaseOutputBuffer(index, true)  // render to surface
+```
+
+### 编码参数
+
+| 参数 | 说明 |
+|---|---|
+| KEY_MIME | `video/avc`(H.264) / `video/hevc`(H.265) |
+| KEY_BIT_RATE | 码率(bps)，影响画质和文件大小 |
+| KEY_FRAME_RATE | 帧率，通常 24/30/60fps |
+| KEY_I_FRAME_INTERVAL | I帧间隔(秒)，1=每秒一个关键帧 |
+| KEY_BITRATE_MODE | VBR(可变)/CBR(恒定)/CQ(恒定质量) |
+| KEY_COLOR_FORMAT | `COLOR_FormatSurface` = Surface 零拷贝模式 |
+
+---
+
+## 15. 关键帧与 GOP 结构
+
+### 帧类型
+
+```
+I帧 (Intra)：完整图像，可独立解码，体积最大
+P帧 (Predicted)：参考前面的帧，只编码差异
+B帧 (Bidirectional)：参考前后帧，压缩率最高但解码最慢
+
+GOP (Group of Pictures)：
+  I B B P B B P B B I B B P ...
+  ↑                 ↑
+  关键帧             关键帧
+  GOP size = 两个I帧之间的帧数
+```
+
+### Seek 与关键帧的关系
+
+```
+seek 到任意帧 → 必须从前一个关键帧开始解码
+  例：GOP=30, seek 到第25帧
+    → 找到前一个 I 帧（第0帧）
+    → 解码 0,1,2,...,25 共 26 帧
+    → 只显示第 25 帧
+
+这就是"seek 延迟"的根本原因，也是 I 帧间隔越小 seek 越快的原因
+```
+
+检测关键帧：`MediaExtractor.SAMPLE_FLAG_SYNC` 标志位
+
+---
+
+## 16. CameraX 视频录制
+
+### 架构
+
+```
+ProcessCameraProvider
+    ├── Preview UseCase → SurfaceProvider → PreviewView(屏幕显示)
+    └── VideoCapture UseCase → Recorder → 编码管线
+                                              ├── 视频：Camera Surface → H.264 编码器
+                                              ├── 音频：AudioRecord → AAC 编码器
+                                              └── MediaMuxer → MP4 文件
+```
+
+### MP4 容器结构
+
+```
+MP4 文件 = ftyp + moov + mdat
+
+ftyp: 文件类型标识（"isom", "mp41" 等）
+moov: 元数据容器
+  ├── mvhd: 影片头（时长、时间基准）
+  ├── trak(视频): 视频轨道
+  │     ├── tkhd: 轨道头（宽高）
+  │     └── mdia → stbl: 采样表（每帧的偏移量、大小、时间戳）
+  └── trak(音频): 音频轨道
+mdat: 实际的音视频压缩数据
+```
+
+---
+
+## 17. PCM 音频混合
+
+### 混合公式
+
+```
+output[i] = clamp(sourceA[i] × volA + sourceB[i] × volB, -32768, 32767)
+```
+
+### 溢出保护
+
+```
+硬限幅 (hard clipping):
+  output = clamp(mixed, -1.0, 1.0)
+  缺点：混合值超限时波形被"切平"，产生谐波失真
+
+软限幅 (soft clipping):
+  output = tanh(mixed)
+  tanh 在 |x|<0.5 时近似线性，|x|→∞ 时趋近 ±1
+  过渡平滑，听感更自然
+```
+
+### 采样率转换（重采样）
+
+```
+44100Hz → 48000Hz：
+  比率 = 44100/48000 = 0.91875
+  每个输出采样对应原始的 0.91875 个采样
+  在相邻原始采样间线性插值：
+    output[i] = sample[floor(i×ratio)] × (1-frac) + sample[ceil(i×ratio)] × frac
+```
+
+---
+
+## 18. 3D LUT 调色
+
+### .cube 文件格式
+
+```
+LUT_3D_SIZE 33              ← 33³ = 35937 个颜色点
+0.000 0.000 0.000           ← RGB(0,0,0) 映射到的输出颜色
+0.031 0.000 0.000           ← RGB(1/32,0,0) 映射到的输出颜色
+...                         ← R 变化最快，然后 G，最后 B
+```
+
+### GPU 实现
+
+```glsl
+// 将 LUT 数据上传为 3D 纹理
+uniform sampler3D uLut;
+uniform float uLutSize;  // 33.0
+
+void main() {
+    vec3 color = texture2D(uVideoFrame, vTexCoord).rgb;
+
+    // 将输入颜色映射到 LUT 纹理坐标（考虑半像素偏移）
+    vec3 lutCoord = color * (uLutSize - 1.0) / uLutSize + 0.5 / uLutSize;
+
+    // GPU 自动三线性插值：在 8 个最近邻 LUT 点之间加权平均
+    gl_FragColor = vec4(texture3D(uLut, lutCoord).rgb, 1.0);
+}
+```
+
+三线性插值使 33³ 个采样点可以覆盖完整的 16.7M 色彩空间（256³）。
