@@ -35,6 +35,7 @@ import com.audio.video.data.model.TransitionEffect
 import com.audio.video.ui.screen.editor.components.FilterSelector
 import com.audio.video.ui.screen.editor.components.FrameStepControls
 import com.audio.video.ui.screen.editor.components.SpeedSelector
+import com.audio.video.ui.screen.editor.components.TextOverlayEditor
 import com.audio.video.ui.screen.editor.components.TransitionSelector
 import com.audio.video.ui.screen.editor.components.VolumeControl
 
@@ -187,6 +188,15 @@ fun EditorScreen(
                     )
                 }
             }
+
+            // 文字贴纸编辑器
+            TextOverlayEditor(
+                overlays = uiState.textOverlays,
+                currentPositionMs = uiState.playerState.currentPositionMs,
+                totalDurationMs = uiState.timelineState.totalDurationMs,
+                onAddOverlay = viewModel::addTextOverlay,
+                onRemoveOverlay = viewModel::removeTextOverlay
+            )
 
             // 底部工具栏
             EditorToolBar(

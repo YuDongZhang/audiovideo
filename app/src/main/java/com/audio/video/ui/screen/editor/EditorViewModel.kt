@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.audio.video.data.model.Project
+import com.audio.video.data.model.TextOverlay
 import com.audio.video.data.model.TimelineState
 import com.audio.video.data.model.TransitionEffect
 import com.audio.video.data.model.VideoFilterType
@@ -29,7 +30,8 @@ data class EditorUiState(
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val waveforms: Map<String, FloatArray> = emptyMap(),
-    val keyframes: Map<String, List<Long>> = emptyMap()
+    val keyframes: Map<String, List<Long>> = emptyMap(),
+    val textOverlays: List<TextOverlay> = emptyList()
 )
 
 /**
@@ -213,6 +215,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             else clip
         }
         updateClips(newClips)
+    }
+
+    /** 添加文字叠加层 */
+    fun addTextOverlay(overlay: TextOverlay) {
+        _uiState.value = _uiState.value.copy(
+            textOverlays = _uiState.value.textOverlays + overlay
+        )
+    }
+
+    /** 移除文字叠加层 */
+    fun removeTextOverlay(overlayId: String) {
+        _uiState.value = _uiState.value.copy(
+            textOverlays = _uiState.value.textOverlays.filter { it.id != overlayId }
+        )
     }
 
     /** 设置选中片段前方的转场效果（当前片段作为转场的"后片段"） */
