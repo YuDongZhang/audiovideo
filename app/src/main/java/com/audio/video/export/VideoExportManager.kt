@@ -15,8 +15,12 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import androidx.media3.effect.SpeedChangeEffect
 import com.audio.video.data.model.ExportConfig
 import com.audio.video.data.model.VideoClip
+import com.audio.video.data.model.VideoFilterType
+import com.audio.video.editor.VideoFilterFactory
+import com.google.common.collect.ImmutableList
 import java.io.File
 
 /**
@@ -59,10 +63,20 @@ class VideoExportManager(private val context: Context) {
                         .build()
                 )
                 .build()
-            // 应用音量：通过 AudioProcessor 实现增益控制
             val builder = EditedMediaItem.Builder(mediaItem)
-            if (clip.volume != 1.0f) {
-                builder.setRemoveAudio(clip.volume == 0f)
+            // 音量：静音时移除音频轨
+            if (clip.volume == 0f) {
+                builder.setRemoveAudio(true)
+            }
+            // 滤镜 + 变速：组合为 Effects 列表
+            val videoEffects = mutableListOf<androidx.media3.common.Effect>()
+            val filterEffect = VideoFilterFactory.createEffect(clip.filterType)
+            if (filterEffect != null) videoEffects.add(filterEffect)
+            if (clip.speed != 1.0f) videoEffects.add(SpeedChangeEffect(clip.speed))
+            if (videoEffects.isNotEmpty()) {
+                builder.setEffects(
+                    androidx.media3.transformer.Effects(emptyList(), ImmutableList.copyOf(videoEffects))
+                )
             }
             builder.build()
         }

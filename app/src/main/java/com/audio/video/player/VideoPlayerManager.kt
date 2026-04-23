@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.ClippingConfiguration
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.audio.video.data.model.VideoClip
@@ -96,11 +97,16 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
     fun pause() { player.pause() }
     fun togglePlayPause() { if (player.isPlaying) pause() else play() }
 
-    /** 根据当前播放片段的 volume 字段设置播放器音量 */
+    /** 根据当前播放片段的 volume 和 speed 字段设置播放器参数 */
     private fun applyCurrentClipVolume() {
         val index = player.currentMediaItemIndex
         if (index in currentClips.indices) {
             player.volume = currentClips[index].volume.coerceIn(0f, 2f)
+            // 应用片段速度 — ExoPlayer 内置 Sonic 算法做音频时间拉伸，保持音调
+            val speed = currentClips[index].speed
+            if (player.playbackParameters.speed != speed) {
+                player.playbackParameters = PlaybackParameters(speed)
+            }
         }
     }
 

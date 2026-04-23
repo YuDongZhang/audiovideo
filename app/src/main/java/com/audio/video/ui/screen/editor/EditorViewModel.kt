@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.audio.video.data.model.Project
 import com.audio.video.data.model.TimelineState
+import com.audio.video.data.model.VideoFilterType
 import com.audio.video.data.model.VideoClip
 import com.audio.video.data.repository.ProjectRepository
 import android.net.Uri
@@ -162,6 +163,30 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         pushUndo(clips)
         val newClips = clips.map { clip ->
             if (clip.id == selectedId) clip.copy(fadeOutMs = durationMs.coerceIn(0, clip.trimmedDurationMs / 2))
+            else clip
+        }
+        updateClips(newClips)
+    }
+
+    /** 设置选中片段的滤镜类型 */
+    fun setFilter(filterType: VideoFilterType) {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val clips = _uiState.value.timelineState.clips
+        pushUndo(clips)
+        val newClips = clips.map { clip ->
+            if (clip.id == selectedId) clip.copy(filterType = filterType)
+            else clip
+        }
+        updateClips(newClips)
+    }
+
+    /** 设置选中片段的播放速度（0.25x ~ 4.0x） */
+    fun setSpeed(speed: Float) {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val clips = _uiState.value.timelineState.clips
+        pushUndo(clips)
+        val newClips = clips.map { clip ->
+            if (clip.id == selectedId) clip.copy(speed = speed.coerceIn(0.25f, 4.0f))
             else clip
         }
         updateClips(newClips)

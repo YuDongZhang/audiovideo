@@ -31,6 +31,8 @@ import com.audio.video.ui.screen.editor.components.PlaybackControls
 import com.audio.video.ui.screen.editor.components.Timeline
 import com.audio.video.ui.screen.editor.components.VideoPreview
 import com.audio.video.ui.screen.editor.components.FadeControl
+import com.audio.video.ui.screen.editor.components.FilterSelector
+import com.audio.video.ui.screen.editor.components.SpeedSelector
 import com.audio.video.ui.screen.editor.components.VolumeControl
 
 /**
@@ -158,6 +160,14 @@ fun EditorScreen(
                     maxDurationMs = selectedClip.trimmedDurationMs,
                     onFadeInChanged = viewModel::setFadeIn,
                     onFadeOutChanged = viewModel::setFadeOut
+                )
+                FilterSelector(
+                    selectedFilter = selectedClip.filterType,
+                    onFilterSelected = viewModel::setFilter
+                )
+                SpeedSelector(
+                    speed = selectedClip.speed,
+                    onSpeedChanged = viewModel::setSpeed
                 )
             }
 
