@@ -33,6 +33,7 @@ import com.audio.video.ui.screen.editor.components.VideoPreview
 import com.audio.video.ui.screen.editor.components.FadeControl
 import com.audio.video.data.model.TransitionEffect
 import com.audio.video.ui.screen.editor.components.FilterSelector
+import com.audio.video.ui.screen.editor.components.FrameStepControls
 import com.audio.video.ui.screen.editor.components.SpeedSelector
 import com.audio.video.ui.screen.editor.components.TransitionSelector
 import com.audio.video.ui.screen.editor.components.VolumeControl
@@ -111,7 +112,7 @@ fun EditorScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 播放控制栏
+            // 播放控制栏 + 逐帧按钮
             PlaybackControls(
                 isPlaying = uiState.playerState.isPlaying,
                 currentPositionMs = uiState.playerState.currentPositionMs,
@@ -119,6 +120,10 @@ fun EditorScreen(
                 onPlayPause = viewModel::togglePlayPause,
                 onSeekToStart = viewModel::seekToStart,
                 onSeekToEnd = viewModel::seekToEnd
+            )
+            FrameStepControls(
+                onStepBackward = viewModel::stepBackward,
+                onStepForward = viewModel::stepForward
             )
 
             Spacer(modifier = Modifier.height(8.dp))

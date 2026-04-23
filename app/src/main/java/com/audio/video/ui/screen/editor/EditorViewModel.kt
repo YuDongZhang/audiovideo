@@ -10,6 +10,7 @@ import com.audio.video.data.model.VideoFilterType
 import com.audio.video.data.model.VideoClip
 import com.audio.video.data.repository.ProjectRepository
 import android.net.Uri
+import com.audio.video.editor.KeyframeAnalyzer
 import com.audio.video.editor.TimelineEngine
 import com.audio.video.editor.WaveformExtractor
 import com.audio.video.player.PlayerState
@@ -27,7 +28,8 @@ data class EditorUiState(
     val isLoading: Boolean = true,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
-    val waveforms: Map<String, FloatArray> = emptyMap()
+    val waveforms: Map<String, FloatArray> = emptyMap(),
+    val keyframes: Map<String, List<Long>> = emptyMap()
 )
 
 /**
@@ -38,6 +40,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private val projectRepository = ProjectRepository(application)
     private val waveformExtractor = WaveformExtractor(application)
+    private val keyframeAnalyzer = KeyframeAnalyzer(application)
     val playerManager = VideoPlayerManager(application, viewModelScope)
 
     private val _uiState = MutableStateFlow(EditorUiState())
@@ -76,6 +79,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (project.clips.isNotEmpty()) {
             playerManager.setTimeline(project.clips)
             loadWaveforms(project.clips)
+            loadKeyframes(project.clips)
         }
     }
 
@@ -96,6 +100,36 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.value = _uiState.value.copy(waveforms = updated)
             }
         }
+    }
+
+    /** 为每个片段异步提取关键帧位置 */
+    private fun loadKeyframes(clips: List<VideoClip>) {
+        clips.forEach { clip ->
+            if (_uiState.value.keyframes.containsKey(clip.id)) return@forEach
+            viewModelScope.launch {
+                val keyframes = keyframeAnalyzer.getKeyframeTimestamps(
+                    uri = Uri.parse(clip.sourceUri),
+                    startMs = clip.startTimeMs,
+                    endMs = clip.endTimeMs
+                )
+                val updated = _uiState.value.keyframes.toMutableMap()
+                updated[clip.id] = keyframes
+                _uiState.value = _uiState.value.copy(keyframes = updated)
+            }
+        }
+    }
+
+    /** 逐帧前进（约 33ms，对应 30fps 的一帧） */
+    fun stepForward() {
+        val current = _uiState.value.playerState.currentPositionMs
+        val total = _uiState.value.timelineState.totalDurationMs
+        seekTo((current + 33).coerceAtMost(total))
+    }
+
+    /** 逐帧后退 */
+    fun stepBackward() {
+        val current = _uiState.value.playerState.currentPositionMs
+        seekTo((current - 33).coerceAtLeast(0))
     }
 
     /** 切换播放/暂停 */

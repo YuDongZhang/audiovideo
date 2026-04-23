@@ -11,6 +11,7 @@ import com.audio.video.ui.screen.editor.EditorScreen
 import com.audio.video.ui.screen.export.ExportScreen
 import com.audio.video.ui.screen.home.HomeScreen
 import com.audio.video.ui.screen.mediapicker.MediaPickerScreen
+import com.audio.video.ui.screen.recorder.RecorderScreen
 
 /** 应用路由定义 */
 object AppRoutes {
@@ -18,6 +19,7 @@ object AppRoutes {
     const val MEDIA_PICKER = "mediaPicker/{projectId}"
     const val EDITOR = "editor/{projectId}"
     const val EXPORT = "export/{projectId}"
+    const val RECORDER = "recorder"
 
     fun mediaPicker(projectId: String) = "mediaPicker/$projectId"
     fun editor(projectId: String) = "editor/$projectId"
@@ -37,6 +39,10 @@ fun AppNavHost(
     ) {
         composable(AppRoutes.HOME) {
             HomeScreen(navController = navController)
+        }
+
+        composable(AppRoutes.RECORDER) {
+            RecorderScreen(navController = navController)
         }
 
         composable(
