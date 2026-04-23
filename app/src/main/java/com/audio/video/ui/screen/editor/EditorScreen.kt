@@ -30,6 +30,7 @@ import com.audio.video.ui.screen.editor.components.EditorToolBar
 import com.audio.video.ui.screen.editor.components.PlaybackControls
 import com.audio.video.ui.screen.editor.components.Timeline
 import com.audio.video.ui.screen.editor.components.VideoPreview
+import com.audio.video.ui.screen.editor.components.VolumeControl
 
 /**
  * 编辑器主页面 — 纵向排列：视频预览、播放控制、时间线、工具栏
@@ -140,7 +141,17 @@ fun EditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            // 选中片段时显示音量控制面板
+            val selectedClip = uiState.timelineState.clips.find {
+                it.id == uiState.timelineState.selectedClipId
+            }
+            if (selectedClip != null) {
+                VolumeControl(
+                    volume = selectedClip.volume,
+                    onVolumeChanged = viewModel::setClipVolume,
+                    onToggleMute = viewModel::toggleMute
+                )
+            }
 
             // 底部工具栏
             EditorToolBar(

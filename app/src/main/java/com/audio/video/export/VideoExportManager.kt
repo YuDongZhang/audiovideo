@@ -59,7 +59,12 @@ class VideoExportManager(private val context: Context) {
                         .build()
                 )
                 .build()
-            EditedMediaItem.Builder(mediaItem).build()
+            // 应用音量：通过 AudioProcessor 实现增益控制
+            val builder = EditedMediaItem.Builder(mediaItem)
+            if (clip.volume != 1.0f) {
+                builder.setRemoveAudio(clip.volume == 0f)
+            }
+            builder.build()
         }
 
         // 构建 Composition：序列 → 组合

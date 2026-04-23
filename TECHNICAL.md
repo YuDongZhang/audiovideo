@@ -118,31 +118,266 @@ awaitEachGesture {
 
 ---
 
-## 3. 时间线编辑引擎 — 纯函数
+## 3. 时间线编辑引擎 — 裁剪、分割与合并
 
-`TimelineEngine` 是无状态的纯函数集合，不依赖 Android，方便单元测试：
+### 3.1 数据模型
 
-### 分割
-
-在全局时间位置将片段一分为二：
-
-```
-片段 [0ms ~ 10000ms]，在 6000ms 处分割
-→ 片段A [0ms ~ 6000ms] + 片段B [6000ms ~ 10000ms]（新 ID）
-```
-
-### 裁剪
-
-调整入点/出点，最小保留 100ms：
+所有编辑操作的基础是 `VideoClip`，它描述了一个片段在原始视频中的"窗口"：
 
 ```kotlin
-newStartMs.coerceIn(0, clip.endTimeMs - 100)
-newEndMs.coerceIn(clip.startTimeMs + 100, clip.originalDurationMs)
+data class VideoClip(
+    val id: String,              // 片段唯一标识
+    val sourceUri: String,       // 原始视频文件 URI
+    val startTimeMs: Long,       // 入点：从原始视频的哪个时间开始
+    val endTimeMs: Long,         // 出点：到原始视频的哪个时间结束
+    val originalDurationMs: Long, // 原始视频总时长（裁剪上限）
+    val displayOrder: Int         // 在时间线上的排列顺序
+) {
+    val trimmedDurationMs: Long   // 有效时长 = endTimeMs - startTimeMs
+}
 ```
 
-### 撤销/重做
+**关键概念**：编辑操作**不修改原始视频文件**，只调整 `startTimeMs` / `endTimeMs` 这两个时间指针。所有裁剪都是"非破坏性编辑"，直到导出时才真正重新编码。
 
-基于快照栈：每次操作前将当前 `List<VideoClip>` 压入撤销栈，清空重做栈。撤销时将当前状态压入重做栈，弹出撤销栈顶恢复。最多保留 50 步。
+```
+原始视频 (10s):  [=============================]
+                  0s                          10s
+
+入点=2s, 出点=7s: [     |=================|     ]
+                       2s                 7s
+                       ↑ startTimeMs      ↑ endTimeMs
+
+有效时长 = 7000 - 2000 = 5000ms
+```
+
+### 3.2 坐标系统 — 三种时间
+
+编辑引擎中存在三种时间坐标，必须严格区分：
+
+| 坐标 | 含义 | 示例 |
+|---|---|---|
+| **原始时间** | 在源视频文件中的绝对位置 | `startTimeMs=2000, endTimeMs=7000` |
+| **片段内时间** | 从片段入点算起的偏移量 | `0 ~ trimmedDurationMs`（0~5000ms） |
+| **全局时间** | 在整条时间线上的位置 | 前面片段时长累加 + 当前片段内偏移 |
+
+```
+时间线: [片段A: 3s] [片段B: 5s] [片段C: 4s]
+全局:    0---3s----3---8s-----8---12s
+片段内:  0---3     0---5      0---4
+
+全局 6s → 落在片段B → 片段内偏移 = 6 - 3 = 3s
+       → 原始时间 = B.startTimeMs + 3s
+```
+
+**转换公式**：
+
+```
+全局时间 → (片段索引, 片段内偏移):
+    accumulated = 0
+    for clip in clips:
+        if accumulated + clip.duration > globalPosition:
+            return (clip, globalPosition - accumulated)
+        accumulated += clip.duration
+
+片段内偏移 → 原始时间:
+    absoluteTime = clip.startTimeMs + offsetInClip
+
+原始时间 → 片段内偏移:
+    offsetInClip = absoluteTime - clip.startTimeMs
+```
+
+### 3.3 分割操作
+
+在播放头位置将一个片段切成两半。**不拷贝视频数据**，只是把一个时间窗口拆成两个相邻窗口。
+
+```
+操作前:
+  片段X: sourceUri=video.mp4, start=2000, end=8000 (时长6s)
+
+在全局位置 globalPos 分割（假设片段内偏移=3500ms）:
+  分割点绝对时间 = X.startTimeMs + 3500 = 5500ms
+
+操作后:
+  片段X:  sourceUri=video.mp4, start=2000, end=5500 (时长3.5s, 保留原ID)
+  片段X': sourceUri=video.mp4, start=5500, end=8000 (时长2.5s, 新ID)
+```
+
+**算法流程**：
+
+```
+splitClip(clips, globalPositionMs):
+  accumulated = 0
+  for each clip (按 displayOrder 排序):
+    clipDuration = clip.endTimeMs - clip.startTimeMs
+
+    if accumulated < globalPositionMs < accumulated + clipDuration:
+      // 分割点落在这个片段内
+      splitPointInClip = globalPositionMs - accumulated
+      absoluteSplitPoint = clip.startTimeMs + splitPointInClip
+
+      前半段 = clip.copy(endTimeMs = absoluteSplitPoint)
+      后半段 = clip.copy(id = newUUID, startTimeMs = absoluteSplitPoint)
+      输出两个片段
+    else:
+      输出原片段（不变）
+
+    accumulated += clipDuration
+  重新编号 displayOrder
+```
+
+**边界保护**：分割点必须在片段内部（`accumulated < globalPos < accumulated + duration`），否则跳过不分割。
+
+### 3.4 裁剪操作
+
+拖拽片段左右边缘的手柄，调整入点或出点。
+
+#### 裁剪入点（左手柄右移 → 片段缩短）
+
+```
+操作前: start=2000, end=8000 (时长6s)
+拖拽左手柄右移 1.5s:
+操作后: start=3500, end=8000 (时长4.5s)
+
+约束: newStart ∈ [0, endTimeMs - 100ms]
+       ↑ 不能为负   ↑ 至少保留100ms
+```
+
+#### 裁剪出点（右手柄左移 → 片段缩短）
+
+```
+操作前: start=2000, end=8000 (时长6s)
+拖拽右手柄左移 2s:
+操作后: start=2000, end=6000 (时长4s)
+
+约束: newEnd ∈ [startTimeMs + 100ms, originalDurationMs]
+       ↑ 至少保留100ms          ↑ 不能超过原始视频时长
+```
+
+#### 像素 → 时间 转换
+
+用户拖拽的是像素偏移，需要转换为时间偏移：
+
+```
+用户拖拽 deltaPx 像素
+pxPerMs = screenWidth / totalDurationMs * zoomLevel   // 时间线的像素/毫秒比率
+deltaMs = deltaPx / pxPerMs                            // 转换为毫秒
+newStartMs = clip.startTimeMs + deltaMs                // 应用到入点
+```
+
+### 3.5 合并（拼接）
+
+多个片段在时间线上**按 `displayOrder` 顺序首尾相连**，就是"合并"。不需要专门的合并函数 — 片段列表本身就是合并结果。
+
+```
+添加新片段:
+  从媒体选择器选中视频 → 创建 VideoClip(startTimeMs=0, endTimeMs=duration)
+  → 追加到现有列表末尾，displayOrder = 现有片段数
+
+时间线:  [已有片段A] [已有片段B] [新加片段C]
+                                 ↑ displayOrder = 2
+```
+
+**播放时的合并**：ExoPlayer 播放列表天然支持多片段顺序播放。设置 `player.setMediaItems(list)` 后，播放器自动无缝衔接。
+
+**导出时的合并**：Media3 Transformer 通过 `EditedMediaItemSequence` 将多个片段编码为单个输出文件：
+
+```kotlin
+val sequence = EditedMediaItemSequence.Builder(editedItems).build()
+val composition = Composition.Builder(sequence).build()
+transformer.start(composition, outputPath)
+// Transformer 内部：解码每个片段 → 按顺序送入编码器 → 输出单个 MP4
+```
+
+### 3.6 删除与重排序
+
+**删除**：从列表移除指定片段，重新编号 `displayOrder`：
+
+```
+操作前: [A(order=0), B(order=1), C(order=2)]
+删除 B:  [A(order=0), C(order=1)]   ← C 的 order 从 2 变为 1
+```
+
+**重排序**：移动片段位置，其余片段依次后移/前移：
+
+```
+操作前: [A(0), B(1), C(2)]
+将 C 移到 A 前面:
+操作后: [C(0), A(1), B(2)]
+```
+
+### 3.7 编辑操作的完整数据流
+
+```
+用户操作（如分割）
+    │
+    ▼
+EditorViewModel.splitAtPlayhead()
+    │
+    ├── 1. pushUndo(currentClips)         // 快照压入撤销栈
+    │
+    ├── 2. TimelineEngine.splitClip()     // 纯函数计算新片段列表
+    │       输入: List<VideoClip> + 播放头位置
+    │       输出: 新的 List<VideoClip>
+    │
+    ├── 3. updateClips(newClips)
+    │       ├── 更新 UI 状态（TimelineState）
+    │       ├── playerManager.setTimeline(newClips)  // 重建播放列表
+    │       │     ├── 保存当前播放位置
+    │       │     ├── player.setMediaItems(...)
+    │       │     ├── player.prepare()
+    │       │     └── seekTo(之前的位置)              // 恢复播放位置
+    │       └── saveProject()                         // 持久化到本地
+    │
+    └── 4. UI 自动刷新（Compose 响应 StateFlow 变化）
+            ├── 时间线重绘片段条
+            ├── 播放头位置更新
+            └── 视频预览帧更新
+```
+
+### 3.8 撤销/重做
+
+基于**状态快照栈**，每次操作前完整保存 `List<VideoClip>`：
+
+```
+操作序列:  原始状态 → 分割 → 裁剪 → 删除
+
+undoStack: [原始状态, 分割后状态, 裁剪后状态]
+redoStack: []
+当前状态:  删除后状态
+
+执行撤销:
+  undoStack: [原始状态, 分割后状态]
+  redoStack: [删除后状态]
+  当前状态:  裁剪后状态  ← 从 undoStack 弹出
+
+再次撤销:
+  undoStack: [原始状态]
+  redoStack: [删除后状态, 裁剪后状态]
+  当前状态:  分割后状态
+
+执行重做:
+  undoStack: [原始状态, 分割后状态]
+  redoStack: [删除后状态]
+  当前状态:  裁剪后状态  ← 从 redoStack 弹出
+```
+
+**规则**：
+- 每次新操作：当前状态压入 undoStack，清空 redoStack
+- 撤销：当前状态压入 redoStack，undoStack 弹出恢复
+- 重做：当前状态压入 undoStack，redoStack 弹出恢复
+- 栈深限制 50 步，超出时丢弃最老的快照
+
+`VideoClip` 是 `data class`，`List.copy` 成本低（只复制引用），50 步快照的内存开销可忽略。
+
+### 3.9 设计原则
+
+| 原则 | 做法 |
+|---|---|
+| **非破坏性** | 只修改时间指针，不动原始文件 |
+| **纯函数** | `TimelineEngine` 无状态无副作用，输入 → 输出 |
+| **不可变** | 每次操作返回新的 `List<VideoClip>`，不修改原列表 |
+| **单一数据源** | `EditorViewModel.uiState` 是唯一真相来源 |
+| **编辑/播放同步** | 每次 `updateClips` 同时更新 UI 状态和播放器播放列表 |
 
 ---
 

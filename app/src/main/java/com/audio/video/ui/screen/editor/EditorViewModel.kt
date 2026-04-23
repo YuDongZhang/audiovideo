@@ -124,6 +124,49 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    /** 设置选中片段的音量（0.0 ~ 2.0） */
+    fun setClipVolume(volume: Float) {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val clips = _uiState.value.timelineState.clips
+        pushUndo(clips)
+        val newClips = clips.map { clip ->
+            if (clip.id == selectedId) clip.copy(volume = volume.coerceIn(0f, 2f))
+            else clip
+        }
+        updateClips(newClips)
+    }
+
+    /** 切换选中片段的静音状态 */
+    fun toggleMute() {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val clip = _uiState.value.timelineState.clips.find { it.id == selectedId } ?: return
+        setClipVolume(if (clip.isMuted) 1.0f else 0f)
+    }
+
+    /** 设置选中片段的淡入时长 */
+    fun setFadeIn(durationMs: Long) {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val clips = _uiState.value.timelineState.clips
+        pushUndo(clips)
+        val newClips = clips.map { clip ->
+            if (clip.id == selectedId) clip.copy(fadeInMs = durationMs.coerceIn(0, clip.trimmedDurationMs / 2))
+            else clip
+        }
+        updateClips(newClips)
+    }
+
+    /** 设置选中片段的淡出时长 */
+    fun setFadeOut(durationMs: Long) {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val clips = _uiState.value.timelineState.clips
+        pushUndo(clips)
+        val newClips = clips.map { clip ->
+            if (clip.id == selectedId) clip.copy(fadeOutMs = durationMs.coerceIn(0, clip.trimmedDurationMs / 2))
+            else clip
+        }
+        updateClips(newClips)
+    }
+
     /** 在播放头位置分割当前片段 */
     fun splitAtPlayhead() {
         val state = _uiState.value.timelineState

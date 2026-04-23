@@ -45,6 +45,11 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
                     )
                 }
             }
+
+            // 片段切换时更新音量（每个片段独立音量）
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                applyCurrentClipVolume()
+            }
         })
         player.playWhenReady = false
     }
@@ -81,6 +86,7 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
         // 恢复到之前的位置（如果仍在范围内）
         val restorePosition = previousPositionMs.coerceIn(0, totalDuration)
         seekTo(restorePosition)
+        applyCurrentClipVolume()
 
         if (wasPlaying) player.play()
     }
@@ -88,6 +94,14 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
     fun play() { player.play() }
     fun pause() { player.pause() }
     fun togglePlayPause() { if (player.isPlaying) pause() else play() }
+
+    /** 根据当前播放片段的 volume 字段设置播放器音量 */
+    private fun applyCurrentClipVolume() {
+        val index = player.currentMediaItemIndex
+        if (index in currentClips.indices) {
+            player.volume = currentClips[index].volume.coerceIn(0f, 2f)
+        }
+    }
 
     /**
      * 跳转到全局时间线位置（毫秒）
