@@ -30,6 +30,7 @@ import com.audio.video.ui.screen.editor.components.EditorToolBar
 import com.audio.video.ui.screen.editor.components.PlaybackControls
 import com.audio.video.ui.screen.editor.components.Timeline
 import com.audio.video.ui.screen.editor.components.VideoPreview
+import com.audio.video.ui.screen.editor.components.FadeControl
 import com.audio.video.ui.screen.editor.components.VolumeControl
 
 /**
@@ -150,6 +151,13 @@ fun EditorScreen(
                     volume = selectedClip.volume,
                     onVolumeChanged = viewModel::setClipVolume,
                     onToggleMute = viewModel::toggleMute
+                )
+                FadeControl(
+                    fadeInMs = selectedClip.fadeInMs,
+                    fadeOutMs = selectedClip.fadeOutMs,
+                    maxDurationMs = selectedClip.trimmedDurationMs,
+                    onFadeInChanged = viewModel::setFadeIn,
+                    onFadeOutChanged = viewModel::setFadeOut
                 )
             }
 

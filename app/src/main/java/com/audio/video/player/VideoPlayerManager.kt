@@ -7,6 +7,7 @@ import androidx.media3.common.MediaItem.ClippingConfiguration
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.audio.video.data.model.VideoClip
+import com.audio.video.editor.AudioFadeCalculator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -142,14 +143,18 @@ class VideoPlayerManager(context: Context, private val scope: CoroutineScope) {
         return position
     }
 
-    /** 启动位置跟踪协程，每 16ms 更新一次播放位置 */
+    /** 启动位置跟踪协程，每 16ms 更新播放位置并实时应用淡入淡出 */
     private fun startPositionTracking() {
         stopPositionTracking()
         positionJob = scope.launch(Dispatchers.Main) {
             while (isActive) {
-                _state.value = _state.value.copy(
-                    currentPositionMs = getCurrentGlobalPosition()
-                )
+                val globalPos = getCurrentGlobalPosition()
+                _state.value = _state.value.copy(currentPositionMs = globalPos)
+
+                // 实时计算淡入淡出增益并应用到播放器音量
+                val volume = AudioFadeCalculator.calculateVolumeAtPosition(currentClips, globalPos)
+                player.volume = volume.coerceIn(0f, 2f)
+
                 delay(16)
             }
         }
