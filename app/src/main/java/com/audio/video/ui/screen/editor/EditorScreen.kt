@@ -31,8 +31,10 @@ import com.audio.video.ui.screen.editor.components.PlaybackControls
 import com.audio.video.ui.screen.editor.components.Timeline
 import com.audio.video.ui.screen.editor.components.VideoPreview
 import com.audio.video.ui.screen.editor.components.FadeControl
+import com.audio.video.data.model.TransitionEffect
 import com.audio.video.ui.screen.editor.components.FilterSelector
 import com.audio.video.ui.screen.editor.components.SpeedSelector
+import com.audio.video.ui.screen.editor.components.TransitionSelector
 import com.audio.video.ui.screen.editor.components.VolumeControl
 
 /**
@@ -169,6 +171,16 @@ fun EditorScreen(
                     speed = selectedClip.speed,
                     onSpeedChanged = viewModel::setSpeed
                 )
+                // 转场选择器：非第一个片段时显示
+                val isFirstClip = uiState.timelineState.clips
+                    .minByOrNull { it.displayOrder }?.id == selectedClip.id
+                if (!isFirstClip) {
+                    TransitionSelector(
+                        transition = uiState.timelineState.transitions[selectedClip.id]
+                            ?: TransitionEffect(),
+                        onTransitionChanged = viewModel::setTransition
+                    )
+                }
             }
 
             // 底部工具栏

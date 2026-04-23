@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.audio.video.data.model.Project
 import com.audio.video.data.model.TimelineState
+import com.audio.video.data.model.TransitionEffect
 import com.audio.video.data.model.VideoFilterType
 import com.audio.video.data.model.VideoClip
 import com.audio.video.data.repository.ProjectRepository
@@ -178,6 +179,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             else clip
         }
         updateClips(newClips)
+    }
+
+    /** 设置选中片段前方的转场效果（当前片段作为转场的"后片段"） */
+    fun setTransition(transition: TransitionEffect) {
+        val selectedId = _uiState.value.timelineState.selectedClipId ?: return
+        val transitions = _uiState.value.timelineState.transitions.toMutableMap()
+        transitions[selectedId] = transition
+        _uiState.value = _uiState.value.copy(
+            timelineState = _uiState.value.timelineState.copy(transitions = transitions)
+        )
+        saveProject()
     }
 
     /** 设置选中片段的播放速度（0.25x ~ 4.0x） */
