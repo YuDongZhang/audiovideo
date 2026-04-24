@@ -70,6 +70,12 @@ dependencies {
     implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.view)
 
+    // ffmpeg-kit: arthenica 已停维且包已下架，按以下步骤启用：
+    // 方案A: 找社区 fork 的 aar 放到 app/libs/ 目录
+    // 方案B: 用 Bytedeco（org.bytedeco:ffmpeg:7.1-1.5.11）
+    // 方案C: 自己交叉编译 FFmpeg
+    // implementation(libs.ffmpeg.kit.full)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
