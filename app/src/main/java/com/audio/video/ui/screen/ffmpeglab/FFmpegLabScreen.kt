@@ -4,6 +4,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,14 +30,17 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.audio.video.ffmpeg.FFmpegNative
 import com.audio.video.ui.screen.ffmpeglab.components.CommandCard
 import com.audio.video.ui.theme.AccentBlue
+import com.audio.video.ui.theme.SurfaceContainerHigh
 import com.audio.video.ui.theme.TextSecondary
 
 /**
@@ -113,6 +117,28 @@ fun FFmpegLabScreen(
                         )
                     }
                 }
+            }
+
+            // Native 层状态
+            item {
+                val nativeInfo = remember {
+                    if (FFmpegNative.isLoaded) {
+                        try { FFmpegNative().getVersion() } catch (_: Exception) { "Native 调用异常" }
+                    } else {
+                        "Native 库未加载 — 需要 NDK 编译 libclipforge_native.so"
+                    }
+                }
+                Text(
+                    text = nativeInfo,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    ),
+                    color = TextSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceContainerHigh, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .padding(12.dp)
+                )
             }
 
             // 命令分组列表

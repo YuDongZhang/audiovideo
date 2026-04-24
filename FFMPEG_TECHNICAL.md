@@ -328,3 +328,172 @@ ui/screen/ffmpeglab/
 - 实际执行的完整命令文本（可复制）
 - 逐参数的中文说明
 - 底层原理和等价的代码对照
+
+---
+
+## 11. NDK 交叉编译（第三阶段）
+
+### 编译脚本要点
+
+```bash
+# 核心 configure 参数
+./configure \
+    --target-os=android \       # 目标系统
+    --arch=aarch64 \            # CPU 架构（arm64-v8a）
+    --cc=$TOOLCHAIN/bin/aarch64-linux-android24-clang \  # NDK 提供的交叉编译器
+    --enable-cross-compile \    # 开启交叉编译
+    --enable-shared \           # 产出 .so 动态库
+    --disable-everything \      # 先全部禁用
+    --enable-decoder=h264,hevc,aac \  # 按需启用
+    --enable-encoder=libx264,aac \
+    --enable-filter=scale,overlay \
+    ...
+```
+
+### 裁剪策略
+
+```
+全量编译 (ffmpeg-kit-full):  ~50MB
+只选 H.264+AAC+基础滤镜:    ~5-8MB
+只选解码器（不编码）:        ~3MB
+
+关键：--disable-everything 然后逐个 --enable-xxx
+```
+
+### 产出文件
+
+```
+output/arm64-v8a/lib/
+  libavformat.so    ← 解封装/封装
+  libavcodec.so     ← 编解码
+  libavutil.so      ← 通用工具
+  libavfilter.so    ← 滤镜
+  libswresample.so  ← 音频重采样
+  libswscale.so     ← 图像缩放
+
+output/arm64-v8a/include/
+  libavformat/*.h   ← C 头文件，JNI 代码 #include 用
+  libavcodec/*.h
+  ...
+```
+
+---
+
+## 12. JNI 桥接层（第三阶段）
+
+### 调用链路
+
+```
+Kotlin                    JNI                         C/C++
+FFmpegNative.getVersion() → JNICALL → Java_..._getVersion(JNIEnv*) → avcodec_configuration()
+                          ↑                          ↑
+                   System.loadLibrary()        链接 libavcodec.so
+                   加载 libclipforge_native.so
+```
+
+### JNI 函数命名规则
+
+```c
+// Kotlin: package com.audio.video.ffmpeg, class FFmpegNative, fun getVersion()
+// C 函数名 = Java_ + 包名(点换下划线) + _类名_ + 方法名
+JNIEXPORT jstring JNICALL
+Java_com_audio_video_ffmpeg_FFmpegNative_getVersion(JNIEnv *env, jobject thiz)
+```
+
+### CMake 构建配置
+
+```cmake
+# 编译 JNI 库
+add_library(clipforge_native SHARED native-lib.c ffmpeg_cmd.c)
+
+# 链接 FFmpeg 预编译库
+add_library(avcodec SHARED IMPORTED)
+set_target_properties(avcodec PROPERTIES IMPORTED_LOCATION ${FFMPEG_DIR}/libavcodec.so)
+
+target_link_libraries(clipforge_native avformat avcodec avutil ...)
+```
+
+---
+
+## 13. FFmpeg C API 完整转码流程（第四阶段）
+
+### 核心数据类型
+
+```
+AVFormatContext — 文件/容器级别的上下文（整个 MP4 文件）
+AVStream        — 一条流（视频流/音频流/字幕流）
+AVCodecContext  — 编解码器上下文（配置参数）
+AVPacket        — 一个压缩数据包（从文件读出 / 编码器产出）
+AVFrame         — 一帧原始数据（解码器产出 / 送入编码器）
+```
+
+### 转码流水线完整步骤
+
+```
+1. avformat_open_input()        打开输入文件
+2. avformat_find_stream_info()  探测流信息
+3. av_find_best_stream()        找到视频/音频流
+4. avcodec_find_decoder()       找到解码器
+5. avcodec_open2()              打开解码器
+
+6. avformat_alloc_output_context2()  创建输出上下文
+7. avcodec_find_encoder()       找到编码器
+8. avcodec_open2()              打开编码器
+9. avformat_write_header()      写入文件头
+
+10. 循环：
+    av_read_frame()             读取压缩包
+    avcodec_send_packet()       送入解码器
+    avcodec_receive_frame()     取出原始帧
+    [像素处理/滤镜]
+    avcodec_send_frame()        送入编码器
+    avcodec_receive_packet()    取出压缩包
+    av_interleaved_write_frame() 写入输出文件
+
+11. flush 编码器（取出缓冲区残留帧）
+12. av_write_trailer()          写入文件尾（moov atom）
+13. 释放所有资源
+```
+
+### 时间戳转换
+
+```c
+// 不同流的时间基(time_base)不同，跨流操作必须转换
+av_packet_rescale_ts(pkt,
+    encoder_ctx->time_base,          // 源时间基
+    output_stream->time_base);       // 目标时间基
+
+// 手动转换
+int64_t new_pts = av_rescale_q(old_pts,
+    (AVRational){1, 90000},          // 源：1/90000 秒
+    (AVRational){1, 30});            // 目标：1/30 秒
+```
+
+### YUV 像素格式
+
+```
+YUV420P — 最常用的视频像素格式
+
+  Y 平面（亮度）: 每个像素一个采样
+    ┌────────────┐
+    │ Y Y Y Y Y Y│  分辨率 = 视频分辨率 (1920×1080)
+    │ Y Y Y Y Y Y│  每个 Y = 1 字节 (0~255)
+    │ Y Y Y Y Y Y│
+    └────────────┘
+
+  U 平面（色度 Cb）: 每 2×2 像素共享一个采样
+    ┌──────┐
+    │ U U U│  分辨率 = 视频的 1/4 (960×540)
+    │ U U U│
+    └──────┘
+
+  V 平面（色度 Cr）: 同 U
+    ┌──────┐
+    │ V V V│
+    │ V V V│
+    └──────┘
+
+  总数据量 = W×H + W×H/4 + W×H/4 = W×H × 1.5
+  比 RGB (W×H×3) 节省 50% 空间
+  人眼对亮度敏感，对色彩不敏感 → 色度可以降采样
+```
