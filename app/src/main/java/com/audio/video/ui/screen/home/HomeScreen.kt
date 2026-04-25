@@ -9,7 +9,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,14 +55,16 @@ fun HomeScreen(
                     )
                 },
                 actions = {
-                    IconButton(onClick = {
-                        navController.navigate(AppRoutes.FFMPEG_LAB)
-                    }) {
-                        Icon(Icons.Default.Terminal, contentDescription = "FFmpeg 实验室")
+                    IconButton(onClick = { navController.navigate(AppRoutes.SPECTRUM) }) {
+                        Icon(Icons.Default.GraphicEq, contentDescription = "频谱")
                     }
-                    IconButton(onClick = {
-                        navController.navigate(AppRoutes.RECORDER)
-                    }) {
+                    IconButton(onClick = { navController.navigate(AppRoutes.GL_DEMO) }) {
+                        Icon(Icons.Default.ViewInAr, contentDescription = "OpenGL")
+                    }
+                    IconButton(onClick = { navController.navigate(AppRoutes.FFMPEG_LAB) }) {
+                        Icon(Icons.Default.Terminal, contentDescription = "FFmpeg")
+                    }
+                    IconButton(onClick = { navController.navigate(AppRoutes.RECORDER) }) {
                         Icon(Icons.Default.Videocam, contentDescription = "录像")
                     }
                 },

@@ -12,7 +12,10 @@ import com.audio.video.ui.screen.export.ExportScreen
 import com.audio.video.ui.screen.home.HomeScreen
 import com.audio.video.ui.screen.mediapicker.MediaPickerScreen
 import com.audio.video.ui.screen.ffmpeglab.FFmpegLabScreen
+import com.audio.video.ui.screen.gldemo.GLDemoScreen
 import com.audio.video.ui.screen.recorder.RecorderScreen
+import com.audio.video.ui.screen.screenrecorder.ScreenRecorderScreen
+import com.audio.video.ui.screen.spectrum.SpectrumScreen
 
 /** 应用路由定义 */
 object AppRoutes {
@@ -22,6 +25,9 @@ object AppRoutes {
     const val EXPORT = "export/{projectId}"
     const val RECORDER = "recorder"
     const val FFMPEG_LAB = "ffmpegLab"
+    const val SPECTRUM = "spectrum"
+    const val GL_DEMO = "glDemo"
+    const val SCREEN_RECORDER = "screenRecorder"
 
     fun mediaPicker(projectId: String) = "mediaPicker/$projectId"
     fun editor(projectId: String) = "editor/$projectId"
@@ -49,6 +55,18 @@ fun AppNavHost(
 
         composable(AppRoutes.FFMPEG_LAB) {
             FFmpegLabScreen(navController = navController)
+        }
+
+        composable(AppRoutes.SPECTRUM) {
+            SpectrumScreen(navController = navController)
+        }
+
+        composable(AppRoutes.GL_DEMO) {
+            GLDemoScreen(navController = navController)
+        }
+
+        composable(AppRoutes.SCREEN_RECORDER) {
+            ScreenRecorderScreen(navController = navController)
         }
 
         composable(
